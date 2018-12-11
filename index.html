@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="utf-8">
+    <title>Airbnb - Project</title>
+    <script type="text/javascript" src="d3.v5.min.js"></script>
+</head>
+
+<body>
+
+    <style>
+        #rootsvg {
+            display: block;
+            margin: 10px auto;
+        }
+        
+        h3 {
+            text-align: center;
+            color: #000080;
+        }
+        
+        .histograms {
+            display: inline-block;
+            margin: 20px;
+            background: #D8DBE2;
+        }
+    </style>
+
+    <h3 id='text-h3'>Click on a Community</h3>
+    <h3 id='text-h3-price'></h3>
+    <h3 id='text-h3-rating'></h3>
+
+    <svg></svg>
+
+</body>
+
+<script type="text/javascript">
+    // width and height of svg
+    var w = 800;
+    var h = 700;
+    var width = 400;
+    var height = 400;
+    var bedrooms;
+    var data;
+
+    //set of collection
+    var dict = {};
+    // each separate neighbourhood avg data
+    var indDict = {};
+
+    // map projection
+    var projection = d3.geoMercator()
+        .center([-114.08529, 51.0501])
+        .translate([w / 2, h / 2])
+        .scale([60000]);
+
+    // path generator
+    var path = d3.geoPath()
+        .projection(projection);
+
+    // SVG element
+    var svg = d3.select("svg")
+        .attr('id', 'rootsvg')
+        .attr("width", w)
+        .attr("height", h);
+
+    // load in geoJSON data
+    d3.json("Calgary.json").then(function(json) {
+
+        d3.csv("data.csv").then(function(csv) {
+            data = csv;
+		
+			// generating histograms
+            generateHistogram('accommodates');
+            generateHistogram('bedrooms');
+            generateHistogram('minstay');
+
+			// looping through data in csv file to add in the dictionary
+            for (var i = 0; i < csv.length; i++) {
+                var name = csv[i].neighborhood;
+                if (name in dict) {
+                    dict[name].push(csv[i]);
+                } else {
+                    dict[name] = [csv[i]]
+                }
+            }
+            // adding the average price of each neighbourhood in the dictionary
+            for (region in dict) {
+                var records = dict[region];
+                var sum = 0;
+                var average;
+                for (var j = 0; j < records.length; j++) {
+                    sum = sum + Number(records[j].price);
+                }
+                average = sum / records.length;
+                indDict[region] = {
+                    'average_price': average
+                };
+            }
+            // adding the average rating of each neighbourhood in the dictionary
+            for (region in dict) {
+                var records = dict[region];
+                var sumation = 0;
+                var avg;
+                var nonRatingCount = 0;
+                for (var k = 0; k < records.length; k++) {
+                    if (records[k].overall_satisfaction == '') {
+                        nonRatingCount += 1;
+                    } else {
+                        sumation += Number(records[k].overall_satisfaction);
+                    }
+                }
+                avg = sumation / (records.length - nonRatingCount);
+
+				// if no rating is given of a particular community
+                if (nonRatingCount == records.length) {
+                    avg = 'No Data Available';
+                }
+                // keep the significant digits to 2 after the decimal
+				if(avg != 'No Data Available') {
+					avg = avg.toFixed(2)
+				}
+                indDict[region].average_rating = avg;
+            }
+
+			// min price for the color scale
+            var minPrice = d3.min(Object.keys(indDict), function(d) {
+                return indDict[d].average_price;
+            });
+            // max price for the color scale
+            var maxPrice = d3.max(Object.keys(indDict), function(d) {
+                return indDict[d].average_price;
+            });
+
+            // Define quantize scale to sort data values into buckets of color
+            var colorScale = d3.scaleQuantize()
+                .range(["LightGreen", "YellowGreen", "DarkGreen"])
+                .domain([minPrice, maxPrice]);
+
+            // bind data and create one path per geoJSON feature
+            var pathCollection = svg.selectAll("path")
+                .data(json.features)
+                .enter()
+                .append("path")
+                .attr("d", path)
+                .attr("stroke", "black")
+                .attr("fill", function(d) {
+                	// color scale according to the price
+                    var name_of_com = d.properties.name.toUpperCase();
+                    if (name_of_com in indDict) {
+                        var price_of_com = indDict[name_of_com].average_price;
+                        return colorScale(price_of_com);
+                    } else {
+                    	// if no data is available
+                        return 'white';
+                    }
+                });
+
+			// updating information on click
+            pathCollection.on('click', function(d) {
+                var name = d.properties.name.toUpperCase();
+                d3.select("#text-h3").text("Community Name: " + name + ". ");
+                d3.select("#text-h3-price").text(avgPrice(name));
+                d3.select('#text-h3-rating').text(avgRating(name));
+            })
+
+			// all the information on the hover as well
+            pathCollection
+                .append("title")
+                .text(function(d) {
+                    var name = d.properties.name.toUpperCase();
+                    return "Community Name: " + name + " " + avgPrice(name) + " " + avgRating(name);
+                })
+        })
+
+    });
+
+    // get the avg price of community by name  
+    function avgPrice(name) {
+        if (indDict[name]) {
+            var avgPrice = "Average Price/night: $" + Number(indDict[name].average_price.toFixed(2)) + ".";
+            return avgPrice;
+        } else {
+            return "Average Price/night: No Data Available.";
+        }
+    }
+    
+    // get the avg rating of the community
+    function avgRating(name) {
+    	if(indDict[name]) {
+    		var avgRate = "Average Rating: " + indDict[name].average_rating;
+    		return avgRate;
+    	}
+    	else {
+    		return "Average Rating: No Data Available."
+    	}
+    }
+
+	// function to create the histograms based on 3 major information that I am visualizing
+    function generateHistogram(key) {
+
+		// placeholder
+        var store = {};
+
+        for (var q = 0; q < data.length; q++) {
+            var keyedValue = data[q][key];
+
+            if (keyedValue in store) {
+                store[keyedValue] = store[keyedValue] + 1
+            } else {
+                store[keyedValue] = 1;
+            }
+        }
+        var maxValue = d3.max(Object.keys(store), function(d) {
+            return store[d]
+        });
+        var minValue = d3.min(Object.keys(store), function(d) {
+            return store[d]
+        });
+
+        var heightScale = d3.scaleLinear().domain([minValue, maxValue]).range([10, height]);
+
+        var xScale = d3.scaleLinear()
+            .domain([d3.min(Object.keys(store), function(d) {
+                return Number(d);
+            }), d3.max(Object.keys(store), function(d) {
+                return Number(d);
+            })]).range([0, width]);
+
+        var svg = d3.select('body')
+            .append('svg')
+            .attr('id', 'histogram-' + key)
+            .attr('class', 'histograms')
+            .attr('width', width + 40)
+            .attr('height', height + 40)
+            .append('g')
+            .attr('transform', 'translate(10,10)')
+
+		// histogram bars
+        var rect = svg.selectAll('rect')
+            .data(Object.keys(store))
+            .enter()
+            .append('rect')
+            .attr('x', function(d, i) {
+                return xScale(+d);
+            })
+            .attr('width', 20)
+            .attr('height', function(d, i) {
+                return heightScale(store[d]);
+            })
+            .attr('y', function(d, i) {
+                return (height - heightScale(Number(store[d])))
+            })
+            .attr('fill', '#000080');
+
+		// numbering under the histogram bars
+        svg.selectAll('text')
+            .data(Object.keys(store))
+            .enter()
+            .append('text')
+            .attr('y', height + 15)
+            .attr('x', function(d) {
+                return xScale(d) + 4;
+            })
+            .text(function(d) {
+                return d;
+            })
+
+		// labeling the histograms
+		if(key == 'accommodates') {
+        	svg.append('text').attr('x', 100).attr('y', 100).text("Accommodation of people in the suite(s).")
+        }
+        else if(key == 'bedrooms') {
+        	svg.append('text').attr('x', 100).attr('y', 100).text("Number of bedrooms available in the suite(s).")
+        }
+        else if(key == 'minstay') {
+        	svg.append('text').attr('x', 50).attr('y', 100).text("Number of minimum nights required to stay in the suite(s).")
+        }
+    }
+</script>
+
+</html>
